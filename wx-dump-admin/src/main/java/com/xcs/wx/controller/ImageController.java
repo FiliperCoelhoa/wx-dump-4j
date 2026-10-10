@@ -1,5 +1,6 @@
 package com.xcs.wx.controller;
 
+import cn.hutool.core.util.StrUtil;
 import com.xcs.wx.service.ImageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.Resource;
@@ -30,6 +31,9 @@ public class ImageController {
      */
     @GetMapping("/downloadImgMd5")
     public ResponseEntity<Resource> downloadImgMd5(@RequestParam String md5) {
+        if (StrUtil.isBlank(md5)) {
+            return ResponseEntity.badRequest().build();
+        }
         return imageService.downloadImgMd5(md5);
     }
 
@@ -41,6 +45,9 @@ public class ImageController {
      */
     @GetMapping("/downloadImg")
     public ResponseEntity<Resource> downloadImg(@RequestParam String path) {
+        if (StrUtil.isBlank(path)) {
+            return ResponseEntity.badRequest().build();
+        }
         return imageService.downloadImg(path);
     }
 
@@ -52,6 +59,9 @@ public class ImageController {
      */
     @GetMapping("/downloadImgFormLocal")
     public ResponseEntity<Resource> downloadImgFormLocal(@RequestParam String localPath) {
+        if (StrUtil.isBlank(localPath)) {
+            return ResponseEntity.badRequest().build();
+        }
         return imageService.downloadImgFormLocal(localPath);
     }
 }
