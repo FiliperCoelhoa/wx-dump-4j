@@ -7,6 +7,7 @@ import com.baomidou.dynamic.datasource.DynamicRoutingDataSource;
 import com.baomidou.dynamic.datasource.creator.DataSourceProperty;
 import com.baomidou.dynamic.datasource.creator.DefaultDataSourceCreator;
 import com.baomidou.dynamic.datasource.creator.druid.DruidConfig;
+import com.xcs.wx.config.DynamicDruidProperties;
 import com.xcs.wx.constant.SqliteConstant;
 import com.xcs.wx.domain.bo.DecryptBO;
 import com.xcs.wx.domain.bo.UserBO;
@@ -54,6 +55,7 @@ public class DatabaseServiceImpl implements DatabaseService, ApplicationRunner {
     private final DecryptService decryptService;
     private final WeChatService weChatService;
     private final UserService userService;
+    private final DynamicDruidProperties dynamicDruidProperties;
 
     @Override
     public void decrypt(SseEmitter emitter, DecryptDTO decryptDTO) {
@@ -192,16 +194,17 @@ public class DatabaseServiceImpl implements DatabaseService, ApplicationRunner {
     private void registerDataSource(String dbPath) {
         String wxId = FileUtil.getName(FileUtil.getParent(dbPath, 1));
         String dbName = FileUtil.getName(dbPath);
+        // 从配置类读取 Druid 连接池参数，替代原先的硬编码
         DruidConfig druidConfig = new DruidConfig();
-        druidConfig.setInitialSize(5);
-        druidConfig.setMinIdle(5);
-        druidConfig.setMaxActive(20);
-        druidConfig.setMaxWait(60000);
-        druidConfig.setValidationQuery("SELECT 1");
-        druidConfig.setTestWhileIdle(true);
-        druidConfig.setTestOnBorrow(false);
-        druidConfig.setTestOnReturn(false);
-        druidConfig.setPoolPreparedStatements(true);
+        druidConfig.setInitialSize(dynamicDruidProperties.getInitialSize());
+        druidConfig.setMinIdle(dynamicDruidProperties.getMinIdle());
+        druidConfig.setMaxActive(dynamicDruidProperties.getMaxActive());
+        druidConfig.setMaxWait(dynamicDruidProperties.getMaxWait());
+        druidConfig.setValidationQuery(dynamicDruidProperties.getValidationQuery());
+        druidConfig.setTestWhileIdle(dynamicDruidProperties.isTestWhileIdle());
+        druidConfig.setTestOnBorrow(dynamicDruidProperties.isTestOnBorrow());
+        druidConfig.setTestOnReturn(dynamicDruidProperties.isTestOnReturn());
+        druidConfig.setPoolPreparedStatements(dynamicDruidProperties.isPoolPreparedStatements());
         DataSourceProperty sourceProperty = new DataSourceProperty();
         sourceProperty.setUrl(SqliteConstant.URL_PREFIX + dbPath);
         sourceProperty.setDriverClassName(SqliteConstant.DRIVER_CLASS_NAME);
