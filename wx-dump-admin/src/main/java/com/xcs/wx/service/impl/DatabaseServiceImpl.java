@@ -78,14 +78,35 @@ public class DatabaseServiceImpl implements DatabaseService, ApplicationRunner {
         String scanPath = dbPath + separator + "MSG";
         // 输出目录
         String outputPath = DirUtil.getDbDir(decryptDTO.getWxId());
+        // 提前检查目录是否存在，避免 Files.walk 抛 NoSuchFileException 后前端无响应
+        Path scanDir = Paths.get(scanPath);
+        if (!Files.exists(scanDir) || !Files.isDirectory(scanDir)) {
+            try {
+                emitter.send(ResponseVO.error(-1, "未找到微信 MSG 数据目录，请确认数据路径是否正确。"), MediaType.APPLICATION_JSON);
+            } catch (IOException ignore) {
+            } finally {
+                emitter.complete();
+            }
+            return;
+        }
         // 使用Files.walk创建一个Stream来遍历给定路径下的所有文件和目录
-        try (Stream<Path> stream = Files.walk(Paths.get(scanPath))) {
+        try (Stream<Path> stream = Files.walk(scanDir)) {
             // 过滤出非目录的文件
             List<DecryptBO> decryptBOList = getWeChatDb(stream, outputPath);
+            // 防御性校验：列表为空时给前端提示，避免除零和无响应
+            if (decryptBOList.isEmpty()) {
+                try {
+                    emitter.send(ResponseVO.error(-1, "扫描完成，但未发现可解密的 .db 数据库文件。"), MediaType.APPLICATION_JSON);
+                } catch (IOException ignore) {
+                } finally {
+                    emitter.complete();
+                }
+                return;
+            }
             // 遍历解密
             for (int i = 0; i < decryptBOList.size(); i++) {
                 DecryptBO decryptBO = decryptBOList.get(i);
-                // 计算进度百分比
+                // 计算进度百分比（decryptBOList.size() 已由上述 isEmpty 保证非零）
                 int currentProgress = ((i + 1) * 100) / decryptBOList.size();
                 // 当前要处理的文件
                 File currentFile = new File(decryptBO.getInput());
