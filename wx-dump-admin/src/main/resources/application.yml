@@ -1,10 +1,13 @@
 spring:
   datasource:
     druid:
+      # Druid 监控页面已默认禁用，避免硬编码凭证（admin/123456）导致未授权访问。
+      # 如需启用，请通过环境变量注入自定义用户名和密码，例如：
+      #   DRUID_USERNAME=myuser DRUID_PASSWORD=mypass java -jar app.jar
       stat-view-servlet:
-        enabled: true
-        login-username: admin
-        login-password: 123456
+        enabled: false
+        login-username: ${DRUID_USERNAME:admin}
+        login-password: ${DRUID_PASSWORD:}
     dynamic:
       druid:
         initial-size: 5
