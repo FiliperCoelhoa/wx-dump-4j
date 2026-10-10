@@ -18,7 +18,10 @@ import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
+import java.net.InetAddress;
+import java.net.URI;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 
 /**
@@ -34,6 +37,54 @@ public class ImageServiceImpl implements ImageService {
 
     private final HardLinkImageAttributeRepository hardLinkImageAttributeRepository;
     private final UserService userService;
+
+    /**
+     * 校验 URL 是否为 SSRF 攻击向量（内网地址、localhost、非 http/https）
+     */
+    private static boolean isSafeUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            String scheme = uri.getScheme();
+            if (scheme == null || (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme))) {
+                return false;
+            }
+            String host = uri.getHost();
+            if (host == null) {
+                return false;
+            }
+            // 解析并检查 host 是否为内网地址
+            InetAddress addr = InetAddress.getByName(host);
+            if (addr.isLoopbackAddress() || addr.isLinkLocalAddress()
+                    || addr.isSiteLocalAddress() || addr.isAnyLocalAddress()) {
+                return false;
+            }
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * 校验本地路径是否包含遍历攻击（..、绝对路径、盘符）
+     */
+    private static boolean isSafeLocalPath(String localPath) {
+        if (StrUtil.isBlank(localPath)) {
+            return false;
+        }
+        // 禁止路径遍历
+        if (localPath.contains("..")) {
+            return false;
+        }
+        // 禁止以 / 开头的 Unix 绝对路径
+        if (localPath.startsWith("/")) {
+            return false;
+        }
+        // 禁止 Windows 盘符开头 (C:\、D:/ 等)
+        if (localPath.matches("^[a-zA-Z]:[\\\\/].*")) {
+            return false;
+        }
+        return true;
+    }
 
     @Override
     public ResponseEntity<Resource> downloadImgMd5(String md5) {
@@ -73,6 +124,11 @@ public class ImageServiceImpl implements ImageService {
 
     @Override
     public ResponseEntity<Resource> downloadImg(String path) {
+        // SSRF 防护：校验 URL scheme 和目标 host 是否为内网
+        if (!isSafeUrl(path)) {
+            log.warn("SSRF block: unsafe URL rejected: {}", path);
+            return ResponseEntity.badRequest().build();
+        }
         // 获取用户信息
         String wxId = userService.currentUser();
         // 返回默认图片
@@ -93,11 +149,23 @@ public class ImageServiceImpl implements ImageService {
 
     @Override
     public ResponseEntity<Resource> downloadImgFormLocal(String localPath) {
+        // 路径遍历防护：禁止 ..、绝对路径、Windows 盘符
+        if (!isSafeLocalPath(localPath)) {
+            log.warn("Path traversal block: unsafe localPath rejected: {}", localPath);
+            return ResponseEntity.badRequest().build();
+        }
         try {
             // 获取用户信息
             String wxId = userService.currentUser();
             // 获得文件目录
             String filePath = DirUtil.getDir(userService.getBasePath(wxId), wxId, localPath);
+            // 路径二次归一化后再检查，防止 DirUtil 拼接后仍有遍历
+            Path normalized = Paths.get(filePath).normalize();
+            Path baseDir = Paths.get(DirUtil.getDir(userService.getBasePath(wxId), wxId)).toAbsolutePath();
+            if (!normalized.toAbsolutePath().startsWith(baseDir)) {
+                log.warn("Path traversal block: resolved path escapes base dir: {}", filePath);
+                return ResponseEntity.badRequest().build();
+            }
             // 检查文件是否存在，返回404
             if (!FileUtil.exist(filePath)) {
                 return ResponseEntity.notFound().build();
