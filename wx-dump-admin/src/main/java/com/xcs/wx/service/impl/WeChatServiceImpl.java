@@ -287,57 +287,63 @@ public class WeChatServiceImpl implements WeChatService {
     public String getKey(int pid, String dbPath) {
         // 打开目标进程
         WinNT.HANDLE process = Kernel32.INSTANCE.OpenProcess(0x1F0FFF, false, pid);
+        try {
+            // 定义不同平台对应的字节数组
+            byte[] iphoneByteArray = "iphone\0".getBytes();
+            byte[] androidByteArray = "android\0".getBytes();
+            byte[] ipadByteArray = "ipad\0".getBytes();
 
-        // 定义不同平台对应的字节数组
-        byte[] iphoneByteArray = "iphone\0".getBytes();
-        byte[] androidByteArray = "android\0".getBytes();
-        byte[] ipadByteArray = "ipad\0".getBytes();
+            // 用于存储不同平台的模块扫描结果
+            List<Pointer> typeAddress = new ArrayList<>();
+            List<Pointer> typeAddress1 = patternScanModule(process, iphoneByteArray);
+            List<Pointer> typeAddress2 = patternScanModule(process, androidByteArray);
+            List<Pointer> typeAddress3 = patternScanModule(process, ipadByteArray);
 
-        // 用于存储不同平台的模块扫描结果
-        List<Pointer> typeAddress = new ArrayList<>();
-        List<Pointer> typeAddress1 = patternScanModule(process, iphoneByteArray);
-        List<Pointer> typeAddress2 = patternScanModule(process, androidByteArray);
-        List<Pointer> typeAddress3 = patternScanModule(process, ipadByteArray);
+            // 优先选择长度至少为2的模块地址列表
+            if (typeAddress1.size() >= 2) {
+                typeAddress = typeAddress1;
+            } else if (typeAddress2.size() >= 2) {
+                typeAddress = typeAddress2;
+            } else if (typeAddress3.size() >= 2) {
+                typeAddress = typeAddress3;
+            } else if (!typeAddress1.isEmpty()) {
+                typeAddress = typeAddress1;
+            } else if (!typeAddress2.isEmpty()) {
+                typeAddress = typeAddress2;
+            } else if (!typeAddress3.isEmpty()) {
+                typeAddress = typeAddress3;
+            }
 
-        // 优先选择长度至少为2的模块地址列表
-        if (typeAddress1.size() >= 2) {
-            typeAddress = typeAddress1;
-        } else if (typeAddress2.size() >= 2) {
-            typeAddress = typeAddress2;
-        } else if (typeAddress3.size() >= 2) {
-            typeAddress = typeAddress3;
-        } else if (!typeAddress1.isEmpty()) {
-            typeAddress = typeAddress1;
-        } else if (!typeAddress2.isEmpty()) {
-            typeAddress = typeAddress2;
-        } else if (!typeAddress3.isEmpty()) {
-            typeAddress = typeAddress3;
-        }
+            // 拼接MicroMsg数据库路径
+            String microMsg = dbPath + "\\Msg\\MicroMsg.db";
 
-        // 拼接MicroMsg数据库路径
-        String microMsg = dbPath + "\\Msg\\MicroMsg.db";
+            // 获取倒序迭代器
+            ListIterator<Pointer> pointerListIterator = typeAddress.listIterator(typeAddress.size());
 
-        // 获取倒序迭代器
-        ListIterator<Pointer> pointerListIterator = typeAddress.listIterator(typeAddress.size());
+            // 倒序遍历模块地址列表
+            while (pointerListIterator.hasPrevious()) {
+                Pointer addressPointer = pointerListIterator.previous();
+                long address = Pointer.nativeValue(addressPointer);
 
-        // 倒序遍历模块地址列表
-        while (pointerListIterator.hasPrevious()) {
-            Pointer addressPointer = pointerListIterator.previous();
-            long address = Pointer.nativeValue(addressPointer);
+                // 在地址范围内以步长8递减遍历，读取密钥
+                for (long i = address; i >= (address - 2000); i -= 8) {
+                    // 读取key
+                    String key = readKey(process, i);
 
-            // 在地址范围内以步长8递减遍历，读取密钥
-            for (long i = address; i >= (address - 2000); i -= 8) {
-                // 读取key
-                String key = readKey(process, i);
-
-                // 如果密钥不为空且验证通过，则返回密钥
-                if (key != null && verifyKey(key, microMsg)) {
-                    return key;
+                    // 如果密钥不为空且验证通过，则返回密钥
+                    if (key != null && verifyKey(key, microMsg)) {
+                        return key;
+                    }
                 }
             }
+            // 未找到匹配的密钥，返回null
+            return null;
+        } finally {
+            // 确保进程句柄被关闭，避免资源泄露
+            if (process != null) {
+                Kernel32.INSTANCE.CloseHandle(process);
+            }
         }
-        // 未找到匹配的密钥，返回null
-        return null;
     }
 
     /**
@@ -616,36 +622,41 @@ public class WeChatServiceImpl implements WeChatService {
         Kernel32 kernel32 = Kernel32.INSTANCE;
         // 打开目标进程句柄
         WinNT.HANDLE process = kernel32.OpenProcess(0x1F0FFF, false, pid);
-        // 设置要匹配的模式字符串
-        String pattern = "\\Msg\\FTSContact";
-        // 在目标进程中扫描符合模式的内存位置
-        List<Pointer> addresses = patternScanAll(process, pattern, 10);
-        // 遍历匹配到的内存位置
-        for (Pointer address : addresses) {
-            // 分配内存作为缓冲区读取数据
-            int bufferSize = 80;
-            Memory buffer = new Memory(bufferSize);
-            IntByReference read = new IntByReference();
-            // 从指定地址的前一部分开始读取内存，而不是从地址的确切位置开始。
-            Pointer offsetPointer = new Pointer(Pointer.nativeValue(address) - 30);
-            // 从指定地址读取内存数据
-            boolean success = kernel32.ReadProcessMemory(process, offsetPointer, buffer, bufferSize, read);
-            if (success) {
-                // 将读取的字节转换为字符串
-                byte[] dataBytes = buffer.getByteArray(0, read.getValue());
-                String data = new String(dataBytes, 0, read.getValue());
-                // 对字符串进行处理，提取微信ID信息
-                data = data.split("\\\\Msg")[0];
-                // 通过文件分隔符分割
-                String[] newData = data.split("\\\\");
-                // 取最后一个为微信Id
-                return newData[newData.length - 1];
+        try {
+            // 设置要匹配的模式字符串
+            String pattern = "\\Msg\\FTSContact";
+            // 在目标进程中扫描符合模式的内存位置
+            List<Pointer> addresses = patternScanAll(process, pattern, 10);
+            // 遍历匹配到的内存位置
+            for (Pointer address : addresses) {
+                // 分配内存作为缓冲区读取数据
+                int bufferSize = 80;
+                Memory buffer = new Memory(bufferSize);
+                IntByReference read = new IntByReference();
+                // 从指定地址的前一部分开始读取内存，而不是从地址的确切位置开始。
+                Pointer offsetPointer = new Pointer(Pointer.nativeValue(address) - 30);
+                // 从指定地址读取内存数据
+                boolean success = kernel32.ReadProcessMemory(process, offsetPointer, buffer, bufferSize, read);
+                if (success) {
+                    // 将读取的字节转换为字符串
+                    byte[] dataBytes = buffer.getByteArray(0, read.getValue());
+                    String data = new String(dataBytes, 0, read.getValue());
+                    // 对字符串进行处理，提取微信ID信息
+                    data = data.split("\\\\Msg")[0];
+                    // 通过文件分隔符分割
+                    String[] newData = data.split("\\\\");
+                    // 取最后一个为微信Id
+                    return newData[newData.length - 1];
+                }
+            }
+            // 返回空
+            return null;
+        } finally {
+            // 确保进程句柄被关闭，避免资源泄露
+            if (process != null) {
+                kernel32.CloseHandle(process);
             }
         }
-        // 关闭目标进程句柄
-        kernel32.CloseHandle(process);
-        // 返回空
-        return null;
     }
 
     /**
